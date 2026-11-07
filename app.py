@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 import calendar
+import json
 
 # --- НАСТРОЙКА СТРАНИЦЫ ---
 st.set_page_config(page_title="Табель посещаемости", layout="wide")
@@ -69,26 +70,44 @@ st.markdown(f"""
 
 st.markdown("---")
 
+# --- ОТСОРТИРОВАННЫЙ СПИСОК СТУДЕНТОВ ---
 students_list = [
-    "Бабенцев Егор Маркович", "Агаев Али Камилович", "Алирзаев Магомед Ифтихар оглы",
-    "Апшиков Даниял Анурович", "Ахметшин Тимур Филюсович", "Варшавец Елисей Александрович",
-    "Гайнуллин Вячеслав Юрьевич", "Гасанбеков Фархад Игнатович", "Гумеров Владимир Яковлевич",
-    "Дегтярева Татьяна Николаевна", "Денисенко Егор Андреевич", "Дмитриев Владислав Павлович",
-    "Ермаков Артем Ильич", "Колмогоров Даниил Николаевич", "Кузнецов Артем Михайлович",
-    "Лазарев Дмитрий Сергеевич", "Макаренко Никита Николаевич", "Марков Степан Александрович",
-    "Мельников Богдан Артёмович", "Мирошниченко Алексей Андреевич", "Папымере Илья Алексеевич",
-    "Протопопов Ярослав Алексеевич", "Розыков Самандар Орифжонович", "Савченко Владислав Вадимович",
-    "Сорокин Олег Константинович", "Хаммадиев Тимур Рафаэльевич", "Чепак Савелий Павлович",
+    "Агаев Али Камилович",
+    "Алирзаев Магомед Ифтихар оглы",
+    "Апшиков Даниял Анурович",
+    "Ахметшин Тимур Филюсович",
+    "Бабенцев Егор Маркович",
+    "Варшавец Елисей Александрович",
+    "Гайнуллин Вячеслав Юрьевич",
+    "Гасанбеков Фархад Игнатович",
+    "Гумеров Владимир Яковлевич",
+    "Дегтярева Татьяна Николаевна",
+    "Денисенко Егор Андреевич",
+    "Дмитриев Владислав Павлович",
+    "Ермаков Артем Ильич",
+    "Колмогоров Даниил Николаевич",
+    "Кузнецов Артем Михайлович",
+    "Лазарев Дмитрий Сергеевич",
+    "Макаренко Никита Николаевич",
+    "Марков Степан Александрович",
+    "Мельников Богдан Артёмович",
+    "Мирошниченко Алексей Андреевич",
+    "Папымере Илья Алексеевич",
+    "Протопопов Ярослав Алексеевич",
+    "Розыков Самандар Орифжонович",
+    "Савченко Владислав Вадимович",
+    "Сорокин Олег Константинович",
+    "Хаммадиев Тимур Рафаэльевич",
+    "Чепак Савелий Павлович",
     "Эсонов Шахриер Фаррухович"
 ]
 days = [str(i) for i in range(1, num_days_in_month + 1)]
 
-# --- ЛОГИКА СОЗДАНИЯ ТАБЛИЦЫ (ПУСТЫЕ ЯЧЕЙКИ ВМЕСТО НУЛЕЙ) ---
+# --- ЛОГИКА СОЗДАНИЯ ТАБЛИЦЫ С ПУСТЫМИ ЯЧЕЙКАМИ ---
 if 'df' not in st.session_state:
     columns = ['№', 'ФИО'] + days + ['Всего часов', 'Всего дней', '%', 'Примечание']
     df = pd.DataFrame(columns=columns)
     for i, name in enumerate(students_list):
-        # Вместо 0 используем None (пустоту). В ячейках будет пусто.
         row = [str(i+1), name] + [None]*len(days) + [0, 0, "0.00%", ""]
         df.loc[len(df)] = row
     st.session_state.df = df
@@ -104,10 +123,9 @@ column_config = {
 }
 for day in days:
     is_weekend = int(day) in st.session_state.weekends
-    # Разрешаем пустые значения (None)
     column_config[day] = st.column_config.NumberColumn(day, min_value=0, max_value=20, step=1, disabled=is_weekend)
 
-st.info("💡 Вводите часы вручную. Пустые клетки означают, что студент был. Нажмите кнопку ниже для пересчета.")
+st.info("💡 Вводите часы вручную. Пустые клетки = был. Нажмите кнопку ниже для пересчета.")
 
 edited_df = st.data_editor(
     st.session_state.df, 
@@ -121,12 +139,10 @@ edited_df = st.data_editor(
 # --- КНОПКА ПЕРЕСЧЕТА ---
 st.markdown("---")
 if st.button("🔄 Пересчитать проценты и обновить итоги", type="primary", use_container_width=True):
-    # Обнуляем выходные дни
     for wd in st.session_state.weekends:
         if str(wd) in edited_df.columns:
-            edited_df[str(wd)] = None # В выходные тоже ставим пустоту
+            edited_df[str(wd)] = None 
             
-    # Перед расчетами заменяем все None (пустые клетки) на 0
     df_for_calc = edited_df.copy()
     for d in days:
         df_for_calc[d] = pd.to_numeric(df_for_calc[d], errors='coerce').fillna(0)
@@ -139,9 +155,8 @@ if st.button("🔄 Пересчитать проценты и обновить �
     df_for_calc['Всего дней'] = (df_for_calc[days] > 0).sum(axis=1)
     df_for_calc['%'] = ((actual_study_hours - df_for_calc['Всего часов']) / actual_study_hours * 100).apply(lambda x: f"{max(0, x):.2f}%" if actual_study_hours > 0 else "100.00%")
     
-    # Возвращаем пустые клетки обратно в редактируемый датафрейм, но обновляем расчеты
     for d in days:
-        edited_df[d] = df_for_calc[d].replace(0, None) # Если 0, снова делаем пустоту для красоты
+        edited_df[d] = df_for_calc[d].replace(0, None)
         
     edited_df['Всего часов'] = df_for_calc['Всего часов']
     edited_df['Всего дней'] = df_for_calc['Всего дней']
@@ -196,10 +211,8 @@ with col2:
                         current_val = 0
                         
                     if not was_present:
-                        # Прибавляем часы
                         st.session_state.df.at[i, selected_day] = current_val + hours_per_lesson
                 
-                # Сразу пересчитываем для обновления таблицы
                 df_for_calc = st.session_state.df.copy()
                 for d in days:
                     df_for_calc[d] = pd.to_numeric(df_for_calc[d], errors='coerce').fillna(0)
@@ -228,7 +241,6 @@ st.markdown("---")
 def convert_df(df):
     return df.to_csv(index=False).encode('utf-8-sig')
 
-# При скачивании заменяем пустые клетки (NaN) на 0, чтобы в Excel было понятно
 df_to_download = st.session_state.df.copy()
 for d in days:
     df_to_download[d] = pd.to_numeric(df_to_download[d], errors='coerce').fillna(0)
