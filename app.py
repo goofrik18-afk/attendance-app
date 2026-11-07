@@ -4,6 +4,7 @@ import calendar
 from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+from openpyxl.utils import get_column_letter
 
 # --- НАСТРОЙКА СТРАНИЦЫ ---
 st.set_page_config(page_title="Табель посещаемости", layout="wide")
@@ -69,7 +70,7 @@ st.markdown(f"""
 
 st.markdown("---")
 
-# --- СПИСОК СТУДЕНТОВ (ПО АЛФАВИТУ) ---
+# --- СПИСОК СТУДЕНТОВ ---
 students_list = [
     "Агаев Али Камилович", "Алирзаев Магомед Ифтихар оглы", "Апшиков Даниял Анурович",
     "Ахметшин Тимур Филюсович", "Бабенцев Егор Маркович", "Варшавец Елисей Александрович",
@@ -106,7 +107,7 @@ for day in days:
     is_weekend = int(day) in st.session_state.weekends
     column_config[day] = st.column_config.NumberColumn(day, min_value=0, max_value=20, step=1, disabled=is_weekend)
 
-st.info("💡 Вводите часы вручную. Пустые клетки = был. Нажмите кнопку ниже для пересчета и скачивания красивого файла.")
+st.info("💡 Вводите часы вручную. Пустые клетки = был. Нажмите кнопку ниже для пересчета.")
 
 edited_df = st.data_editor(
     st.session_state.df, 
@@ -215,9 +216,8 @@ with col2:
                 st.success(f"Отметки за {selected_day} число применены!")
                 st.rerun()
 
-# --- ФУНКЦИЯ СОЗДАНИЯ КРАСИВОГО EXCEL ---
+# --- УЛУЧШЕННАЯ ФУНКЦИЯ СОЗДАНИЯ EXCEL ---
 def create_styled_excel(df, month_name, year):
-    # Создаем новую книгу Excel в памяти
     output = BytesIO()
     workbook = Workbook()
     worksheet = workbook.active
@@ -230,56 +230,52 @@ def create_styled_excel(df, month_name, year):
     left_align = Alignment(horizontal="left", vertical="center")
     thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
     
-    # Заголовок таблицы
-    worksheet.merge_cells('A1:E1')
-    worksheet['A1'] = f"ТАБЕЛЬ УЧЕТА ПОСЕЩАЕМОСТИ\nГруппа: РУПО 26/11 | {month_name} {year}"
-    worksheet['A1'].font = Font(bold=True, size=14)
-    worksheet['A1'].alignment = center_align
+    # Заголовок
+    worksheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(df.columns))
+    worksheet.cell(row=1, column=1, value=f"ТАБЕЛЬ УЧЕТА ПОСЕЩАЕМОСТИ\nГруппа: РУПО 26/11 | {month_name} {year}").font = Font(bold=True, size=14)
+    worksheet.cell(row=1, column=1).alignment = center_align
     worksheet.row_dimensions[1].height = 40
 
-    # Записываем шапку (строка 2)
+    # Шапка (строка 3)
     headers = list(df.columns)
     for col_num, header in enumerate(headers, 1):
-        cell = worksheet.cell(row=3, column=col_num)
-        cell.value = header
+        cell = worksheet.cell(row=3, column=col_num, value=header)
         cell.font = header_font
         cell.fill = header_fill
         cell.alignment = center_align
         cell.border = thin_border
     
-    # Записываем данные (строки 4 и ниже)
+    # Данные
     for row_idx, row_data in enumerate(df.values, 4):
         for col_idx, value in enumerate(row_data, 1):
             cell = worksheet.cell(row=row_idx, column=col_idx)
-            # Если значение пустое (None или NaN), оставляем ячейку пустой, иначе пишем цифру/текст
             if pd.isna(value):
-                cell.value = None
+                cell.value = "" # Пустая строка вместо None
             else:
                 cell.value = value
-                
             cell.border = thin_border
-            cell.alignment = center_align
-            
-            # Выравниваем по левому краю ФИО и Примечания для красоты
-            if headers[col_idx-1] in ["ФИО", "Примечание"]:
-                cell.alignment = left_align
+            cell.alignment = center_align if headers[col_idx-1] not in ["ФИО", "Примечание"] else left_align
 
-    # Автоматическая ширина колонок
-    for column_cells in worksheet.columns:
-        length = max(len(str(cell.value)) for cell in column_cells)
-        worksheet.column_dimensions[column_cells[0].column_letter].width = length + 2
+    # ЖЕСТКАЯ ШИРИНА КОЛОНОК (чтобы избежать ошибки)
+    for i in range(1, len(headers) + 1):
+        col_letter = get_column_letter(i)
+        header_name = headers[i-1]
+        if header_name == "№":
+            worksheet.column_dimensions[col_letter].width = 5
+        elif header_name == "ФИО":
+            worksheet.column_dimensions[col_letter].width = 35
+        elif header_name in ["Всего часов", "Всего дней", "%", "Примечание"]:
+            worksheet.column_dimensions[col_letter].width = 15
+        else:
+            worksheet.column_dimensions[col_letter].width = 5 # Для дней
 
-    # Сохраняем в BytesIO
     workbook.save(output)
     output.seek(0)
     return output
 
 # --- КНОПКА СКАЧИВАНИЯ EXCEL ---
 st.markdown("---")
-# Готовим данные для скачивания (заменяем None на пустоту, чтобы не было "None" в Excel)
 df_to_excel = st.session_state.df.copy()
-
-# Создаем файл
 excel_file = create_styled_excel(df_to_excel, months_names[st.session_state.current_month - 1], st.session_state.current_year)
 
 st.download_button(
