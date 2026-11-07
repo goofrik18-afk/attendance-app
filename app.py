@@ -13,6 +13,8 @@ if 'current_year' not in st.session_state:
     st.session_state.current_year = 2026
 if 'weekends' not in st.session_state:
     st.session_state.weekends = [] 
+if 'search_query' not in st.session_state:
+    st.session_state.search_query = ""
 
 # --- БОКОВАЯ ПАНЕЛЬ ---
 with st.sidebar:
@@ -103,6 +105,18 @@ if 'df' not in st.session_state:
             df.loc[len(df)] = row
         st.session_state.df = df
 
+# --- ПОИСК СТУДЕНТА ---
+st.write("### 🔍 Быстрый поиск")
+search_query = st.text_input("Введите фамилию или имя для фильтрации:", value=st.session_state.search_query)
+if search_query != st.session_state.search_query:
+    st.session_state.search_query = search_query
+
+# --- ФИЛЬТРАЦИЯ ТАБЛИЦЫ ---
+if st.session_state.search_query:
+    filtered_df = st.session_state.df[st.session_state.df['ФИО'].str.contains(st.session_state.search_query, case=False, na=False)]
+else:
+    filtered_df = st.session_state.df
+
 # --- НАСТРОЙКА ТАБЛИЦЫ ---
 column_config = {
     "№": st.column_config.TextColumn("№", width="small"), 
@@ -118,8 +132,8 @@ for day in days:
 
 st.info("💡 Вводите часы вручную в таблицу или используйте блок быстрой отметки в самом низу страницы.")
 
-edited_df = st.data_editor(
-    st.session_state.df, 
+edited_filtered_df = st.data_editor(
+    filtered_df, 
     column_config=column_config, 
     use_container_width=True, 
     hide_index=True, 
@@ -127,24 +141,29 @@ edited_df = st.data_editor(
     num_rows="dynamic" 
 )
 
+# Если мы фильтровали таблицу, нужно обновить оригинальный датафрейм
+if st.session_state.search_query:
+    st.session_state.df.update(edited_filtered_df)
+else:
+    st.session_state.df = edited_filtered_df
+
 # --- КНОПКА СОХРАНЕНИЯ ---
 st.markdown("---")
 if st.button("💾 Сохранить изменения и пересчитать", type="primary", use_container_width=True):
     for wd in st.session_state.weekends:
-        if str(wd) in edited_df.columns:
-            edited_df[str(wd)] = 0
+        if str(wd) in st.session_state.df.columns:
+            st.session_state.df[str(wd)] = 0
             
     total_hours_in_month = len(days) * 6 
     weekend_hours = len(st.session_state.weekends) * 6
     actual_study_hours = total_hours_in_month - weekend_hours
 
-    edited_df['Всего часов'] = edited_df[days].sum(axis=1)
-    edited_df['Всего дней'] = (edited_df[days] > 0).sum(axis=1)
-    edited_df['%'] = ((actual_study_hours - edited_df['Всего часов']) / actual_study_hours * 100).apply(lambda x: f"{max(0, x):.2f}%" if actual_study_hours > 0 else "100.00%")
+    st.session_state.df['Всего часов'] = st.session_state.df[days].sum(axis=1)
+    st.session_state.df['Всего дней'] = (st.session_state.df[days] > 0).sum(axis=1)
+    st.session_state.df['%'] = ((actual_study_hours - st.session_state.df['Всего часов']) / actual_study_hours * 100).apply(lambda x: f"{max(0, x):.2f}%" if actual_study_hours > 0 else "100.00%")
     
-    st.session_state.df = edited_df
     try:
-        edited_df.to_csv(current_db_file, index=False, encoding='utf-8-sig')
+        st.session_state.df.to_csv(current_db_file, index=False, encoding='utf-8-sig')
     except:
         pass
     st.success("Данные успешно пересчитаны и сохранены!")
@@ -174,7 +193,6 @@ with col2:
     with col_date:
         selected_day = st.selectbox("День:", options=days, index=0)
     with col_lesson:
-        # Выбор номера пары (просто для визуального удобства)
         lesson_num = st.selectbox("Пара №:", options=[1, 2, 3, 4, 5], index=0)
     with col_hours:
         hours_per_lesson = st.number_input("Часов в паре:", min_value=1, max_value=4, value=2)
@@ -182,7 +200,6 @@ with col2:
     with st.form("quick_attendance_form"):
         attendance_checks = {}
         
-        # Галочки по умолчанию стоят (все пришли)
         for i, name in enumerate(st.session_state.df['ФИО']):
             attendance_checks[i] = st.checkbox(f"{name}", value=True, key=f"check_{i}")
             
@@ -192,17 +209,13 @@ with col2:
             if selected_day in st.session_state.weekends:
                 st.error("Этот день отмечен как выходной. Сначала уберите его из выходных в левом меню.")
             else:
-                # Обновляем данные
                 for i, was_present in attendance_checks.items():
                     current_val = st.session_state.df.at[i, selected_day]
                     if was_present:
-                        # Если пришел, ничего не меняем (оставляем как есть, обычно там 0)
                         pass 
                     else:
-                        # Если не пришел, ПРИБАВЛЯЕМ часы за эту пару
                         st.session_state.df.at[i, selected_day] = current_val + hours_per_lesson
                 
-                # Пересчитываем итоги
                 total_hours_in_month = len(days) * 6 
                 weekend_hours = len(st.session_state.weekends) * 6
                 actual_study_hours = total_hours_in_month - weekend_hours
