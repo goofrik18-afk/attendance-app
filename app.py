@@ -47,7 +47,8 @@ with st.sidebar:
     uploaded_file = st.file_uploader("Загрузить сохраненный табель (CSV)", type="csv")
     if uploaded_file is not None:
         try:
-            loaded_data = pd.read_csv(uploaded_file)
+            # Читаем с учетом точки с запятой
+            loaded_data = pd.read_csv(uploaded_file, sep=';')
             st.session_state.df = loaded_data
             st.success("Файл загружен!")
         except Exception as e:
@@ -104,14 +105,13 @@ if 'df' not in st.session_state:
     columns = ['№', 'ФИО'] + days + ['Всего часов', 'Всего дней', '%', 'Примечание']
     df = pd.DataFrame(columns=columns)
     for i, name in enumerate(students_list):
-        # Нумерация начинается с 1 (i+1)
         row = [str(i+1), name] + [None]*len(days) + [0, 0, "0.00%", ""]
         df.loc[len(df)] = row
     st.session_state.df = df
 
 # --- НАСТРОЙКА ТАБЛИЦЫ ---
 column_config = {
-    "№": st.column_config.TextColumn("№", width="small", disabled=True), # Запрещаем менять номер вручную
+    "№": st.column_config.TextColumn("№", width="small", disabled=True),
     "ФИО": st.column_config.TextColumn("Фамилия, имя, отчество", width="large", disabled=True),
     "Всего часов": st.column_config.NumberColumn("Всего часов", disabled=True),
     "Всего дней": st.column_config.NumberColumn("Всего дней", disabled=True),
@@ -130,7 +130,7 @@ edited_df = st.data_editor(
     use_container_width=True, 
     hide_index=True, 
     key="editor_input",
-    num_rows="fixed" # Запрещаем добавлять/удалять строки, чтобы не сбить нумерацию
+    num_rows="fixed" 
 )
 
 # --- КНОПКА ПЕРЕСЧЕТА ---
@@ -181,7 +181,7 @@ with col1:
 
 with col2:
     st.subheader("⚡ Быстрая отметка")
-    st.write("Отметьте галочками тех, кто **ПРИШЕЛ**. Остальным прибавятся часы пропуска.")
+    st.write("Отметьте галочками тех, кто **ПРИШЕЛ**.")
     
     col_date, col_lesson, col_hours = st.columns(3)
     with col_date:
@@ -231,11 +231,13 @@ with col2:
                 st.success(f"Отметки за {selected_day} число применены!")
                 st.rerun()
 
-# --- СКАЧАТЬ ---
+# --- СКАЧАТЬ ДЛЯ EXCEL (С РАЗДЕЛИТЕЛЕМ ТОЧКА С ЗАПЯТОЙ) ---
 st.markdown("---")
 @st.cache_data
 def convert_df(df):
-    return df.to_csv(index=False).encode('utf-8-sig')
+    # ВАЖНО: sep=';' делает файл совместимым с русским Excel (колонки не слипаются)
+    # decimal=',' меняет точки на запятые в процентах (если нужно)
+    return df.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
 
 df_to_download = st.session_state.df.copy()
 for d in days:
@@ -244,7 +246,7 @@ for d in days:
 csv = convert_df(df_to_download)
 
 st.download_button(
-    label=f"📥 Скачать табель в Excel", 
+    label=f"📥 Скачать для Excel", 
     data=csv, 
     file_name=f'Табель_{st.session_state.current_month}_{st.session_state.current_year}.csv', 
     mime='text/csv',
