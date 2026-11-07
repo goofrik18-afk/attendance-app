@@ -114,7 +114,7 @@ column_config = {
 }
 for day in days:
     is_weekend = int(day) in st.session_state.weekends
-    column_config[day] = st.column_config.NumberColumn(day, min_value=0, max_value=10, step=1, disabled=is_weekend)
+    column_config[day] = st.column_config.NumberColumn(day, min_value=0, max_value=20, step=1, disabled=is_weekend)
 
 st.info("💡 Вводите часы вручную в таблицу или используйте блок быстрой отметки в самом низу страницы.")
 
@@ -130,12 +130,10 @@ edited_df = st.data_editor(
 # --- КНОПКА СОХРАНЕНИЯ ---
 st.markdown("---")
 if st.button("💾 Сохранить изменения и пересчитать", type="primary", use_container_width=True):
-    # Принудительно обнуляем часы в выходные дни
     for wd in st.session_state.weekends:
         if str(wd) in edited_df.columns:
             edited_df[str(wd)] = 0
             
-    # Пересчитываем
     total_hours_in_month = len(days) * 6 
     weekend_hours = len(st.session_state.weekends) * 6
     actual_study_hours = total_hours_in_month - weekend_hours
@@ -152,7 +150,7 @@ if st.button("💾 Сохранить изменения и пересчитат
     st.success("Данные успешно пересчитаны и сохранены!")
     st.rerun()
 
-# --- НОВЫЙ БЛОК: СВОДКА (Слева) ---
+# --- БЛОК СВОДКИ И БЫСТРОЙ ОТМЕТКИ ---
 st.markdown("---")
 col1, col2 = st.columns([1, 1])
 
@@ -168,25 +166,28 @@ with col1:
     for index, row in worst_students.iterrows():
         st.write(f"- {row['ФИО']} — {row['%']}")
 
-# --- НОВЫЙ БЛОК: БЫСТРАЯ ОТМЕТКА (Справа) ---
 with col2:
     st.subheader("⚡ Быстрая отметка на паре")
-    st.write("Отметьте галочками тех, кто **ПРИШЕЛ**. Остальным автоматически поставится пропуск.")
+    st.write("Укажите количество **ПРОПУЩЕННЫХ ПАР** для каждого студента.")
     
     col_date, col_hours = st.columns(2)
     with col_date:
-        # Выбор дня для отметки
         selected_day = st.selectbox("Выберите день:", options=days, index=0)
     with col_hours:
-        # Сколько часов ставить за пропуск
-        hours_to_set = st.number_input("Часов за пропуск:", min_value=1, max_value=10, value=2)
+        hours_per_lesson = st.number_input("Часов в одной паре:", min_value=1, max_value=4, value=2)
         
-    # Создаем форму для быстрой отметки
     with st.form("quick_attendance_form"):
-        # Создаем чекбоксы для каждого студента
-        attendance_checks = {}
+        # Словарь для хранения выбранного количества пропущенных пар
+        missed_lessons = {}
+        
+        # Выводим для каждого студента выпадающий список от 0 до 5 пар
         for i, name in enumerate(st.session_state.df['ФИО']):
-            attendance_checks[i] = st.checkbox(f"{name}", value=True) # По умолчанию все пришли
+            missed_lessons[i] = st.selectbox(
+                f"{name}", 
+                options=[0, 1, 2, 3, 4, 5], 
+                index=0, 
+                key=f"quick_{i}"
+            )
             
         submit_quick = st.form_submit_button("Применить отметку", type="primary")
         
@@ -195,11 +196,10 @@ with col2:
                 st.error("Этот день отмечен как выходной. Сначала уберите его из выходных в левом меню.")
             else:
                 # Обновляем данные в таблице
-                for i, was_present in attendance_checks.items():
-                    if was_present:
-                        st.session_state.df.at[i, selected_day] = 0 # Был — 0 часов
-                    else:
-                        st.session_state.df.at[i, selected_day] = hours_to_set # Не был — часы
+                for i, lessons_missed in missed_lessons.items():
+                    # Часы пропуска = количество пар * часов в паре
+                    hours_to_set = lessons_missed * hours_per_lesson
+                    st.session_state.df.at[i, selected_day] = hours_to_set
                 
                 # Пересчитываем итоги
                 total_hours_in_month = len(days) * 6 
@@ -210,7 +210,6 @@ with col2:
                 st.session_state.df['Всего дней'] = (st.session_state.df[days] > 0).sum(axis=1)
                 st.session_state.df['%'] = ((actual_study_hours - st.session_state.df['Всего часов']) / actual_study_hours * 100).apply(lambda x: f"{max(0, x):.2f}%" if actual_study_hours > 0 else "100.00%")
                 
-                # Сохраняем
                 try:
                     st.session_state.df.to_csv(current_db_file, index=False, encoding='utf-8-sig')
                 except:
