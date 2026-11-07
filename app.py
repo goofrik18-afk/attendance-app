@@ -72,23 +72,21 @@ days = [str(i) for i in range(1, num_days_in_month + 1)]
 
 # --- ЗАЩИЩЕННАЯ ЛОГИКА ЗАГРУЗКИ ---
 current_db_file = f"tabell_{st.session_state.current_year}_{st.session_state.current_month}.csv"
+
 if 'df' not in st.session_state:
     file_loaded = False
     if os.path.exists(current_db_file):
         try:
             loaded_df = pd.read_csv(current_db_file)
             if len(loaded_df) == len(students_list):
-                # ПРИНУДИТЕЛЬНО ПРИВОДИМ ТИПЫ ДАННЫХ В ПОРЯДОК
                 loaded_df['№'] = loaded_df['№'].astype(str).replace('nan', '').fillna('')
                 loaded_df['ФИО'] = loaded_df['ФИО'].astype(str).fillna('')
                 loaded_df['Примечание'] = loaded_df['Примечание'].astype(str).replace('nan', '').fillna('')
-                
                 for d in days:
                     if d in loaded_df.columns:
                         loaded_df[d] = pd.to_numeric(loaded_df[d], errors='coerce').fillna(0).astype(int)
                     else:
                         loaded_df[d] = 0
-                        
                 st.session_state.df = loaded_df
                 file_loaded = True
             else:
@@ -118,7 +116,7 @@ for day in days:
     is_weekend = int(day) in st.session_state.weekends
     column_config[day] = st.column_config.NumberColumn(day, min_value=0, max_value=10, step=1, disabled=is_weekend)
 
-st.info("💡 Вводите часы в таблицу. Когда закончите — нажмите кнопку **«Сохранить изменения»** под таблицей.")
+st.info("💡 Вводите часы вручную в таблицу или используйте блок быстрой отметки в самом низу страницы.")
 
 edited_df = st.data_editor(
     st.session_state.df, 
@@ -132,10 +130,12 @@ edited_df = st.data_editor(
 # --- КНОПКА СОХРАНЕНИЯ ---
 st.markdown("---")
 if st.button("💾 Сохранить изменения и пересчитать", type="primary", use_container_width=True):
+    # Принудительно обнуляем часы в выходные дни
     for wd in st.session_state.weekends:
         if str(wd) in edited_df.columns:
             edited_df[str(wd)] = 0
             
+    # Пересчитываем
     total_hours_in_month = len(days) * 6 
     weekend_hours = len(st.session_state.weekends) * 6
     actual_study_hours = total_hours_in_month - weekend_hours
@@ -152,14 +152,73 @@ if st.button("💾 Сохранить изменения и пересчитат
     st.success("Данные успешно пересчитаны и сохранены!")
     st.rerun()
 
-# --- ИТОГО ---
-st.markdown("### Итого по группе за день")
-totals_row = st.session_state.df[days].sum().to_dict()
-totals_row['ФИО'] = 'ИТОГО:'
-totals_row['№'] = ''
-df_totals = pd.DataFrame([totals_row])[['№', 'ФИО'] + days]
-st.dataframe(df_totals, use_container_width=True, hide_index=True)
+# --- НОВЫЙ БЛОК: СВОДКА (Слева) ---
+st.markdown("---")
+col1, col2 = st.columns([1, 1])
 
+with col1:
+    st.subheader("📊 Краткая сводка")
+    avg_percent = pd.to_numeric(st.session_state.df['%'].str.replace('%', ''), errors='coerce').mean()
+    df_sorted = st.session_state.df.sort_values(by='%', ascending=True)
+    worst_students = df_sorted.head(3)[['ФИО', '%']]
+    
+    st.metric(label="Средняя посещаемость группы", value=f"{avg_percent:.1f}%" if pd.notna(avg_percent) else "0%")
+    
+    st.write("**Топ-3 должников:**")
+    for index, row in worst_students.iterrows():
+        st.write(f"- {row['ФИО']} — {row['%']}")
+
+# --- НОВЫЙ БЛОК: БЫСТРАЯ ОТМЕТКА (Справа) ---
+with col2:
+    st.subheader("⚡ Быстрая отметка на паре")
+    st.write("Отметьте галочками тех, кто **ПРИШЕЛ**. Остальным автоматически поставится пропуск.")
+    
+    col_date, col_hours = st.columns(2)
+    with col_date:
+        # Выбор дня для отметки
+        selected_day = st.selectbox("Выберите день:", options=days, index=0)
+    with col_hours:
+        # Сколько часов ставить за пропуск
+        hours_to_set = st.number_input("Часов за пропуск:", min_value=1, max_value=10, value=2)
+        
+    # Создаем форму для быстрой отметки
+    with st.form("quick_attendance_form"):
+        # Создаем чекбоксы для каждого студента
+        attendance_checks = {}
+        for i, name in enumerate(st.session_state.df['ФИО']):
+            attendance_checks[i] = st.checkbox(f"{name}", value=True) # По умолчанию все пришли
+            
+        submit_quick = st.form_submit_button("Применить отметку", type="primary")
+        
+        if submit_quick:
+            if selected_day in st.session_state.weekends:
+                st.error("Этот день отмечен как выходной. Сначала уберите его из выходных в левом меню.")
+            else:
+                # Обновляем данные в таблице
+                for i, was_present in attendance_checks.items():
+                    if was_present:
+                        st.session_state.df.at[i, selected_day] = 0 # Был — 0 часов
+                    else:
+                        st.session_state.df.at[i, selected_day] = hours_to_set # Не был — часы
+                
+                # Пересчитываем итоги
+                total_hours_in_month = len(days) * 6 
+                weekend_hours = len(st.session_state.weekends) * 6
+                actual_study_hours = total_hours_in_month - weekend_hours
+
+                st.session_state.df['Всего часов'] = st.session_state.df[days].sum(axis=1)
+                st.session_state.df['Всего дней'] = (st.session_state.df[days] > 0).sum(axis=1)
+                st.session_state.df['%'] = ((actual_study_hours - st.session_state.df['Всего часов']) / actual_study_hours * 100).apply(lambda x: f"{max(0, x):.2f}%" if actual_study_hours > 0 else "100.00%")
+                
+                # Сохраняем
+                try:
+                    st.session_state.df.to_csv(current_db_file, index=False, encoding='utf-8-sig')
+                except:
+                    pass
+                st.success(f"Отметки за {selected_day} число успешно применены!")
+                st.rerun()
+
+# --- СКАЧАТЬ РЕЗЕРВНУЮ КОПИЮ ---
 st.markdown("---")
 @st.cache_data
 def convert_df(df):
