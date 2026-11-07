@@ -70,18 +70,34 @@ students_list = [
 ]
 days = [str(i) for i in range(1, num_days_in_month + 1)]
 
-# --- ЛОГИКА ЗАГРУЗКИ ---
+# --- ЗАЩИЩЕННАЯ ЛОГИКА ЗАГРУЗКИ ---
 current_db_file = f"tabell_{st.session_state.current_year}_{st.session_state.current_month}.csv"
 if 'df' not in st.session_state:
+    file_loaded = False
     if os.path.exists(current_db_file):
         try:
-            st.session_state.df = pd.read_csv(current_db_file)
-        except:
-            st.session_state.df = None
-    else:
-        st.session_state.df = None
+            loaded_df = pd.read_csv(current_db_file)
+            if len(loaded_df) == len(students_list):
+                # ПРИНУДИТЕЛЬНО ПРИВОДИМ ТИПЫ ДАННЫХ В ПОРЯДОК
+                loaded_df['№'] = loaded_df['№'].astype(str).replace('nan', '').fillna('')
+                loaded_df['ФИО'] = loaded_df['ФИО'].astype(str).fillna('')
+                loaded_df['Примечание'] = loaded_df['Примечание'].astype(str).replace('nan', '').fillna('')
+                
+                for d in days:
+                    if d in loaded_df.columns:
+                        loaded_df[d] = pd.to_numeric(loaded_df[d], errors='coerce').fillna(0).astype(int)
+                    else:
+                        loaded_df[d] = 0
+                        
+                st.session_state.df = loaded_df
+                file_loaded = True
+            else:
+                os.remove(current_db_file)
+        except Exception:
+            if os.path.exists(current_db_file):
+                os.remove(current_db_file)
 
-    if st.session_state.df is None:
+    if not file_loaded:
         columns = ['№', 'ФИО'] + days + ['Всего часов', 'Всего дней', '%', 'Примечание']
         df = pd.DataFrame(columns=columns)
         for i, name in enumerate(students_list):
@@ -104,8 +120,6 @@ for day in days:
 
 st.info("💡 Вводите часы в таблицу. Когда закончите — нажмите кнопку **«Сохранить изменения»** под таблицей.")
 
-# --- ВВОД ДАННЫХ (БЕЗ ПЕРЕСЧЕТА) ---
-# Используем отдельный ключ key="editor_input", чтобы Streamlit не дергал таблицу при каждом нажатии
 edited_df = st.data_editor(
     st.session_state.df, 
     column_config=column_config, 
@@ -118,12 +132,10 @@ edited_df = st.data_editor(
 # --- КНОПКА СОХРАНЕНИЯ ---
 st.markdown("---")
 if st.button("💾 Сохранить изменения и пересчитать", type="primary", use_container_width=True):
-    # Принудительно обнуляем часы в выходные дни
     for wd in st.session_state.weekends:
         if str(wd) in edited_df.columns:
             edited_df[str(wd)] = 0
             
-    # Пересчитываем
     total_hours_in_month = len(days) * 6 
     weekend_hours = len(st.session_state.weekends) * 6
     actual_study_hours = total_hours_in_month - weekend_hours
@@ -132,19 +144,15 @@ if st.button("💾 Сохранить изменения и пересчитат
     edited_df['Всего дней'] = (edited_df[days] > 0).sum(axis=1)
     edited_df['%'] = ((actual_study_hours - edited_df['Всего часов']) / actual_study_hours * 100).apply(lambda x: f"{max(0, x):.2f}%" if actual_study_hours > 0 else "100.00%")
     
-    # Сохраняем в сессию
     st.session_state.df = edited_df
-    
-    # Пробуем сохранить на диск (сработает локально)
     try:
         edited_df.to_csv(current_db_file, index=False, encoding='utf-8-sig')
     except:
         pass
-        
     st.success("Данные успешно пересчитаны и сохранены!")
     st.rerun()
 
-# --- ОТОБРАЖЕНИЕ РЕЗУЛЬТАТОВ ---
+# --- ИТОГО ---
 st.markdown("### Итого по группе за день")
 totals_row = st.session_state.df[days].sum().to_dict()
 totals_row['ФИО'] = 'ИТОГО:'
