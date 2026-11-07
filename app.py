@@ -47,7 +47,6 @@ with st.sidebar:
     st.header("💾 Резервное копирование")
     st.write("На бесплатном хостинге данные могут стираться. Скачивайте копию в конце дня.")
     
-    # Кнопка загрузки файла (если сервер перезагрузился)
     uploaded_file = st.file_uploader("Загрузить сохраненный табель (CSV)", type="csv")
     if uploaded_file is not None:
         try:
@@ -84,12 +83,13 @@ students_list = [
 ]
 days = [str(i) for i in range(1, num_days_in_month + 1)]
 
-# --- ЛОГИКА СОЗДАНИЯ ТАБЛИЦЫ (БЕЗ ФАЙЛОВ, ЧТОБЫ НЕ ТОРМОЗИЛО) ---
+# --- ЛОГИКА СОЗДАНИЯ ТАБЛИЦЫ (ПУСТЫЕ ЯЧЕЙКИ ВМЕСТО НУЛЕЙ) ---
 if 'df' not in st.session_state:
     columns = ['№', 'ФИО'] + days + ['Всего часов', 'Всего дней', '%', 'Примечание']
     df = pd.DataFrame(columns=columns)
     for i, name in enumerate(students_list):
-        row = [str(i+1), name] + [0]*len(days) + [0, 0, "0.00%", ""]
+        # Вместо 0 используем None (пустоту). В ячейках будет пусто.
+        row = [str(i+1), name] + [None]*len(days) + [0, 0, "0.00%", ""]
         df.loc[len(df)] = row
     st.session_state.df = df
 
@@ -104,11 +104,11 @@ column_config = {
 }
 for day in days:
     is_weekend = int(day) in st.session_state.weekends
+    # Разрешаем пустые значения (None)
     column_config[day] = st.column_config.NumberColumn(day, min_value=0, max_value=20, step=1, disabled=is_weekend)
 
-st.info("💡 Вводите часы вручную. Таблица не тормозит при вводе. Нажмите кнопку под таблицей, чтобы пересчитать итоги.")
+st.info("💡 Вводите часы вручную. Пустые клетки означают, что студент был. Нажмите кнопку ниже для пересчета.")
 
-# Отрисовываем таблицу. Благодаря ключу "editor_input" она не сбрасывается
 edited_df = st.data_editor(
     st.session_state.df, 
     column_config=column_config, 
@@ -124,18 +124,29 @@ if st.button("🔄 Пересчитать проценты и обновить �
     # Обнуляем выходные дни
     for wd in st.session_state.weekends:
         if str(wd) in edited_df.columns:
-            edited_df[str(wd)] = 0
+            edited_df[str(wd)] = None # В выходные тоже ставим пустоту
             
-    # Математика
+    # Перед расчетами заменяем все None (пустые клетки) на 0
+    df_for_calc = edited_df.copy()
+    for d in days:
+        df_for_calc[d] = pd.to_numeric(df_for_calc[d], errors='coerce').fillna(0)
+
     total_hours_in_month = len(days) * 6 
     weekend_hours = len(st.session_state.weekends) * 6
     actual_study_hours = total_hours_in_month - weekend_hours
 
-    edited_df['Всего часов'] = edited_df[days].sum(axis=1)
-    edited_df['Всего дней'] = (edited_df[days] > 0).sum(axis=1)
-    edited_df['%'] = ((actual_study_hours - edited_df['Всего часов']) / actual_study_hours * 100).apply(lambda x: f"{max(0, x):.2f}%" if actual_study_hours > 0 else "100.00%")
+    df_for_calc['Всего часов'] = df_for_calc[days].sum(axis=1)
+    df_for_calc['Всего дней'] = (df_for_calc[days] > 0).sum(axis=1)
+    df_for_calc['%'] = ((actual_study_hours - df_for_calc['Всего часов']) / actual_study_hours * 100).apply(lambda x: f"{max(0, x):.2f}%" if actual_study_hours > 0 else "100.00%")
     
-    # Сохраняем в память
+    # Возвращаем пустые клетки обратно в редактируемый датафрейм, но обновляем расчеты
+    for d in days:
+        edited_df[d] = df_for_calc[d].replace(0, None) # Если 0, снова делаем пустоту для красоты
+        
+    edited_df['Всего часов'] = df_for_calc['Всего часов']
+    edited_df['Всего дней'] = df_for_calc['Всего дней']
+    edited_df['%'] = df_for_calc['%']
+    
     st.session_state.df = edited_df
     st.success("Расчеты обновлены!")
     st.rerun()
@@ -181,17 +192,32 @@ with col2:
             else:
                 for i, was_present in attendance_checks.items():
                     current_val = st.session_state.df.at[i, selected_day]
+                    if pd.isna(current_val):
+                        current_val = 0
+                        
                     if not was_present:
+                        # Прибавляем часы
                         st.session_state.df.at[i, selected_day] = current_val + hours_per_lesson
                 
-                # Сразу пересчитываем после галочек
+                # Сразу пересчитываем для обновления таблицы
+                df_for_calc = st.session_state.df.copy()
+                for d in days:
+                    df_for_calc[d] = pd.to_numeric(df_for_calc[d], errors='coerce').fillna(0)
+
                 total_hours_in_month = len(days) * 6 
                 weekend_hours = len(st.session_state.weekends) * 6
                 actual_study_hours = total_hours_in_month - weekend_hours
 
-                st.session_state.df['Всего часов'] = st.session_state.df[days].sum(axis=1)
-                st.session_state.df['Всего дней'] = (st.session_state.df[days] > 0).sum(axis=1)
-                st.session_state.df['%'] = ((actual_study_hours - st.session_state.df['Всего часов']) / actual_study_hours * 100).apply(lambda x: f"{max(0, x):.2f}%" if actual_study_hours > 0 else "100.00%")
+                df_for_calc['Всего часов'] = df_for_calc[days].sum(axis=1)
+                df_for_calc['Всего дней'] = (df_for_calc[days] > 0).sum(axis=1)
+                df_for_calc['%'] = ((actual_study_hours - df_for_calc['Всего часов']) / actual_study_hours * 100).apply(lambda x: f"{max(0, x):.2f}%" if actual_study_hours > 0 else "100.00%")
+                
+                for d in days:
+                    st.session_state.df[d] = df_for_calc[d].replace(0, None)
+                
+                st.session_state.df['Всего часов'] = df_for_calc['Всего часов']
+                st.session_state.df['Всего дней'] = df_for_calc['Всего дней']
+                st.session_state.df['%'] = df_for_calc['%']
                 
                 st.success(f"Отметки за {selected_day} число (Пара №{lesson_num}) применены!")
                 st.rerun()
@@ -202,7 +228,12 @@ st.markdown("---")
 def convert_df(df):
     return df.to_csv(index=False).encode('utf-8-sig')
 
-csv = convert_df(st.session_state.df)
+# При скачивании заменяем пустые клетки (NaN) на 0, чтобы в Excel было понятно
+df_to_download = st.session_state.df.copy()
+for d in days:
+    df_to_download[d] = pd.to_numeric(df_to_download[d], errors='coerce').fillna(0)
+
+csv = convert_df(df_to_download)
 
 st.download_button(
     label=f"📥 Скачать табель в Excel ({months_names[st.session_state.current_month - 1]})", 
