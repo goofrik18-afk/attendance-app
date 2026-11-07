@@ -167,39 +167,40 @@ with col1:
         st.write(f"- {row['ФИО']} — {row['%']}")
 
 with col2:
-    st.subheader("⚡ Быстрая отметка на паре")
-    st.write("Укажите количество **ПРОПУЩЕННЫХ ПАР** для каждого студента.")
+    st.subheader("⚡ Быстрая отметка")
+    st.write("Отметьте галочками тех, кто **ПРИШЕЛ**. Остальным прибавятся часы пропуска.")
     
-    col_date, col_hours = st.columns(2)
+    col_date, col_lesson, col_hours = st.columns(3)
     with col_date:
-        selected_day = st.selectbox("Выберите день:", options=days, index=0)
+        selected_day = st.selectbox("День:", options=days, index=0)
+    with col_lesson:
+        # Выбор номера пары (просто для визуального удобства)
+        lesson_num = st.selectbox("Пара №:", options=[1, 2, 3, 4, 5], index=0)
     with col_hours:
-        hours_per_lesson = st.number_input("Часов в одной паре:", min_value=1, max_value=4, value=2)
+        hours_per_lesson = st.number_input("Часов в паре:", min_value=1, max_value=4, value=2)
         
     with st.form("quick_attendance_form"):
-        # Словарь для хранения выбранного количества пропущенных пар
-        missed_lessons = {}
+        attendance_checks = {}
         
-        # Выводим для каждого студента выпадающий список от 0 до 5 пар
+        # Галочки по умолчанию стоят (все пришли)
         for i, name in enumerate(st.session_state.df['ФИО']):
-            missed_lessons[i] = st.selectbox(
-                f"{name}", 
-                options=[0, 1, 2, 3, 4, 5], 
-                index=0, 
-                key=f"quick_{i}"
-            )
+            attendance_checks[i] = st.checkbox(f"{name}", value=True, key=f"check_{i}")
             
-        submit_quick = st.form_submit_button("Применить отметку", type="primary")
+        submit_quick = st.form_submit_button(f"Применить (Пара №{lesson_num})", type="primary")
         
         if submit_quick:
             if selected_day in st.session_state.weekends:
                 st.error("Этот день отмечен как выходной. Сначала уберите его из выходных в левом меню.")
             else:
-                # Обновляем данные в таблице
-                for i, lessons_missed in missed_lessons.items():
-                    # Часы пропуска = количество пар * часов в паре
-                    hours_to_set = lessons_missed * hours_per_lesson
-                    st.session_state.df.at[i, selected_day] = hours_to_set
+                # Обновляем данные
+                for i, was_present in attendance_checks.items():
+                    current_val = st.session_state.df.at[i, selected_day]
+                    if was_present:
+                        # Если пришел, ничего не меняем (оставляем как есть, обычно там 0)
+                        pass 
+                    else:
+                        # Если не пришел, ПРИБАВЛЯЕМ часы за эту пару
+                        st.session_state.df.at[i, selected_day] = current_val + hours_per_lesson
                 
                 # Пересчитываем итоги
                 total_hours_in_month = len(days) * 6 
@@ -214,7 +215,7 @@ with col2:
                     st.session_state.df.to_csv(current_db_file, index=False, encoding='utf-8-sig')
                 except:
                     pass
-                st.success(f"Отметки за {selected_day} число успешно применены!")
+                st.success(f"Отметки за {selected_day} число (Пара №{lesson_num}) применены!")
                 st.rerun()
 
 # --- СКАЧАТЬ РЕЗЕРВНУЮ КОПИЮ ---
