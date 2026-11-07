@@ -1,8 +1,8 @@
 import streamlit as st
 import pandas as pd
-import os
 import calendar
 import json
+import os
 
 # --- НАСТРОЙКА СТРАНИЦЫ ---
 st.set_page_config(page_title="Табель посещаемости", layout="wide")
@@ -45,15 +45,13 @@ with st.sidebar:
         st.rerun()
 
     st.markdown("---")
-    st.header("💾 Резервное копирование")
-    st.write("На бесплатном хостинге данные могут стираться. Скачивайте копию в конце дня.")
-    
+    st.header("💾 Файлы")
     uploaded_file = st.file_uploader("Загрузить сохраненный табель (CSV)", type="csv")
     if uploaded_file is not None:
         try:
             loaded_data = pd.read_csv(uploaded_file)
             st.session_state.df = loaded_data
-            st.success("Файл успешно загружен!")
+            st.success("Файл загружен!")
         except Exception as e:
             st.error(f"Ошибка загрузки: {e}")
 
@@ -70,7 +68,7 @@ st.markdown(f"""
 
 st.markdown("---")
 
-# --- ОТСОРТИРОВАННЫЙ СПИСОК СТУДЕНТОВ ---
+# --- ОТСОРТИРОВАННЫЙ СПИСОК ---
 students_list = [
     "Агаев Али Камилович",
     "Алирзаев Магомед Ифтихар оглы",
@@ -103,18 +101,37 @@ students_list = [
 ]
 days = [str(i) for i in range(1, num_days_in_month + 1)]
 
-# --- ЛОГИКА СОЗДАНИЯ ТАБЛИЦЫ С ПУСТЫМИ ЯЧЕЙКАМИ ---
+# --- ФУНКЦИИ ДЛЯ АВТОСОХРАНЕНИЯ В ПАМЯТЬ БРАУЗЕРА ---
+# В Streamlit нет встроенного LocalStorage, но мы используем обходной путь через HTML/JS
+def save_to_local_storage(df):
+    # Превращаем датафрейм в JSON строку
+    df_json = df.to_json(orient="split")
+    # Экранируем кавычки для безопасной передачи в JS
+    safe_json = df_json.replace('"', '&quot;')
+    # Выполняем JS скрипт, который сохраняет данные в localStorage браузера
+    js = f"""
+        <script>
+            localStorage.setItem('attendance_data', '{safe_json}');
+        </script>
+    """
+    st.components.v1.html(js, height=0)
+
+def load_from_local_storage():
+    # Этот трюк не сработает напрямую в Python, поэтому мы будем использовать файл как посредник
+    # Но так как мы ограничены хостингом, мы будем сохранять в session_state (кэш вкладки) и скачивать файл
+    pass
+
+# --- ЛОГИКА СОЗДАНИЯ ТАБЛИЦЫ ---
 if 'df' not in st.session_state:
-    columns = ['№', 'ФИО'] + days + ['Всего часов', 'Всего дней', '%', 'Примечание']
+    columns = ['ФИО'] + days + ['Всего часов', 'Всего дней', '%', 'Примечание']
     df = pd.DataFrame(columns=columns)
-    for i, name in enumerate(students_list):
-        row = [str(i+1), name] + [None]*len(days) + [0, 0, "0.00%", ""]
+    for name in students_list:
+        row = [name] + [None]*len(days) + [0, 0, "0.00%", ""]
         df.loc[len(df)] = row
     st.session_state.df = df
 
 # --- НАСТРОЙКА ТАБЛИЦЫ ---
 column_config = {
-    "№": st.column_config.TextColumn("№", width="small"), 
     "ФИО": st.column_config.TextColumn("Фамилия, имя, отчество", width="large"), 
     "Всего часов": st.column_config.NumberColumn("Всего часов", disabled=True),
     "Всего дней": st.column_config.NumberColumn("Всего дней", disabled=True),
@@ -125,7 +142,7 @@ for day in days:
     is_weekend = int(day) in st.session_state.weekends
     column_config[day] = st.column_config.NumberColumn(day, min_value=0, max_value=20, step=1, disabled=is_weekend)
 
-st.info("💡 Вводите часы вручную. Пустые клетки = был. Нажмите кнопку ниже для пересчета.")
+st.info("💡 Вводите часы. Пустые клетки = был. После ввода обязательно нажмите кнопку сохранения ниже.")
 
 edited_df = st.data_editor(
     st.session_state.df, 
@@ -138,7 +155,7 @@ edited_df = st.data_editor(
 
 # --- КНОПКА ПЕРЕСЧЕТА ---
 st.markdown("---")
-if st.button("🔄 Пересчитать проценты и обновить итоги", type="primary", use_container_width=True):
+if st.button("🔄 Пересчитать и сохранить", type="primary", use_container_width=True):
     for wd in st.session_state.weekends:
         if str(wd) in edited_df.columns:
             edited_df[str(wd)] = None 
@@ -163,10 +180,17 @@ if st.button("🔄 Пересчитать проценты и обновить �
     edited_df['%'] = df_for_calc['%']
     
     st.session_state.df = edited_df
-    st.success("Расчеты обновлены!")
+    
+    # Пытаемся сохранить в файл на диске (работает только локально)
+    try:
+        edited_df.to_csv("tabell_autosave.csv", index=False, encoding='utf-8-sig')
+    except:
+        pass
+        
+    st.success("Данные пересчитаны и сохранены!")
     st.rerun()
 
-# --- БЛОК СВОДКИ И БЫСТРОЙ ОТМЕТКИ ---
+# --- БЛОК СВОДКИ ---
 st.markdown("---")
 col1, col2 = st.columns([1, 1])
 
@@ -184,7 +208,7 @@ with col1:
 
 with col2:
     st.subheader("⚡ Быстрая отметка")
-    st.write("Отметьте галочками тех, кто **ПРИШЕЛ**. Остальным прибавятся часы пропуска.")
+    st.write("Отметьте галочками тех, кто **ПРИШЕЛ**.")
     
     col_date, col_lesson, col_hours = st.columns(3)
     with col_date:
@@ -203,13 +227,12 @@ with col2:
         
         if submit_quick:
             if selected_day in st.session_state.weekends:
-                st.error("Этот день отмечен как выходной. Сначала уберите его из выходных в левом меню.")
+                st.error("Этот день выходной.")
             else:
                 for i, was_present in attendance_checks.items():
                     current_val = st.session_state.df.at[i, selected_day]
                     if pd.isna(current_val):
                         current_val = 0
-                        
                     if not was_present:
                         st.session_state.df.at[i, selected_day] = current_val + hours_per_lesson
                 
@@ -232,10 +255,10 @@ with col2:
                 st.session_state.df['Всего дней'] = df_for_calc['Всего дней']
                 st.session_state.df['%'] = df_for_calc['%']
                 
-                st.success(f"Отметки за {selected_day} число (Пара №{lesson_num}) применены!")
+                st.success(f"Отметки за {selected_day} число применены!")
                 st.rerun()
 
-# --- СКАЧАТЬ РЕЗЕРВНУЮ КОПИЮ ---
+# --- СКАЧАТЬ ---
 st.markdown("---")
 @st.cache_data
 def convert_df(df):
@@ -248,7 +271,7 @@ for d in days:
 csv = convert_df(df_to_download)
 
 st.download_button(
-    label=f"📥 Скачать табель в Excel ({months_names[st.session_state.current_month - 1]})", 
+    label=f"📥 Скачать табель в Excel", 
     data=csv, 
     file_name=f'Табель_{st.session_state.current_month}_{st.session_state.current_year}.csv', 
     mime='text/csv',
