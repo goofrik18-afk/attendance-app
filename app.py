@@ -13,8 +13,6 @@ if 'current_year' not in st.session_state:
     st.session_state.current_year = 2026
 if 'weekends' not in st.session_state:
     st.session_state.weekends = [] 
-if 'search_query' not in st.session_state:
-    st.session_state.search_query = ""
 
 # --- БОКОВАЯ ПАНЕЛЬ ---
 with st.sidebar:
@@ -45,6 +43,20 @@ with st.sidebar:
         st.session_state.weekends = selected_weekends
         st.rerun()
 
+    st.markdown("---")
+    st.header("💾 Резервное копирование")
+    st.write("На бесплатном хостинге данные могут стираться. Скачивайте копию в конце дня.")
+    
+    # Кнопка загрузки файла (если сервер перезагрузился)
+    uploaded_file = st.file_uploader("Загрузить сохраненный табель (CSV)", type="csv")
+    if uploaded_file is not None:
+        try:
+            loaded_data = pd.read_csv(uploaded_file)
+            st.session_state.df = loaded_data
+            st.success("Файл успешно загружен!")
+        except Exception as e:
+            st.error(f"Ошибка загрузки: {e}")
+
 # --- ШАПКА ---
 st.markdown(f"""
     <div style="text-align: center; font-size: 20px; margin-bottom: 20px;">
@@ -72,50 +84,14 @@ students_list = [
 ]
 days = [str(i) for i in range(1, num_days_in_month + 1)]
 
-# --- ЗАЩИЩЕННАЯ ЛОГИКА ЗАГРУЗКИ ---
-current_db_file = f"tabell_{st.session_state.current_year}_{st.session_state.current_month}.csv"
-
+# --- ЛОГИКА СОЗДАНИЯ ТАБЛИЦЫ (БЕЗ ФАЙЛОВ, ЧТОБЫ НЕ ТОРМОЗИЛО) ---
 if 'df' not in st.session_state:
-    file_loaded = False
-    if os.path.exists(current_db_file):
-        try:
-            loaded_df = pd.read_csv(current_db_file)
-            if len(loaded_df) == len(students_list):
-                loaded_df['№'] = loaded_df['№'].astype(str).replace('nan', '').fillna('')
-                loaded_df['ФИО'] = loaded_df['ФИО'].astype(str).fillna('')
-                loaded_df['Примечание'] = loaded_df['Примечание'].astype(str).replace('nan', '').fillna('')
-                for d in days:
-                    if d in loaded_df.columns:
-                        loaded_df[d] = pd.to_numeric(loaded_df[d], errors='coerce').fillna(0).astype(int)
-                    else:
-                        loaded_df[d] = 0
-                st.session_state.df = loaded_df
-                file_loaded = True
-            else:
-                os.remove(current_db_file)
-        except Exception:
-            if os.path.exists(current_db_file):
-                os.remove(current_db_file)
-
-    if not file_loaded:
-        columns = ['№', 'ФИО'] + days + ['Всего часов', 'Всего дней', '%', 'Примечание']
-        df = pd.DataFrame(columns=columns)
-        for i, name in enumerate(students_list):
-            row = [str(i+1), name] + [0]*len(days) + [0, 0, "0.00%", ""]
-            df.loc[len(df)] = row
-        st.session_state.df = df
-
-# --- ПОИСК СТУДЕНТА ---
-st.write("### 🔍 Быстрый поиск")
-search_query = st.text_input("Введите фамилию или имя для фильтрации:", value=st.session_state.search_query)
-if search_query != st.session_state.search_query:
-    st.session_state.search_query = search_query
-
-# --- ФИЛЬТРАЦИЯ ТАБЛИЦЫ ---
-if st.session_state.search_query:
-    filtered_df = st.session_state.df[st.session_state.df['ФИО'].str.contains(st.session_state.search_query, case=False, na=False)]
-else:
-    filtered_df = st.session_state.df
+    columns = ['№', 'ФИО'] + days + ['Всего часов', 'Всего дней', '%', 'Примечание']
+    df = pd.DataFrame(columns=columns)
+    for i, name in enumerate(students_list):
+        row = [str(i+1), name] + [0]*len(days) + [0, 0, "0.00%", ""]
+        df.loc[len(df)] = row
+    st.session_state.df = df
 
 # --- НАСТРОЙКА ТАБЛИЦЫ ---
 column_config = {
@@ -130,10 +106,11 @@ for day in days:
     is_weekend = int(day) in st.session_state.weekends
     column_config[day] = st.column_config.NumberColumn(day, min_value=0, max_value=20, step=1, disabled=is_weekend)
 
-st.info("💡 Вводите часы вручную в таблицу или используйте блок быстрой отметки в самом низу страницы.")
+st.info("💡 Вводите часы вручную. Таблица не тормозит при вводе. Нажмите кнопку под таблицей, чтобы пересчитать итоги.")
 
-edited_filtered_df = st.data_editor(
-    filtered_df, 
+# Отрисовываем таблицу. Благодаря ключу "editor_input" она не сбрасывается
+edited_df = st.data_editor(
+    st.session_state.df, 
     column_config=column_config, 
     use_container_width=True, 
     hide_index=True, 
@@ -141,32 +118,26 @@ edited_filtered_df = st.data_editor(
     num_rows="dynamic" 
 )
 
-# Если мы фильтровали таблицу, нужно обновить оригинальный датафрейм
-if st.session_state.search_query:
-    st.session_state.df.update(edited_filtered_df)
-else:
-    st.session_state.df = edited_filtered_df
-
-# --- КНОПКА СОХРАНЕНИЯ ---
+# --- КНОПКА ПЕРЕСЧЕТА ---
 st.markdown("---")
-if st.button("💾 Сохранить изменения и пересчитать", type="primary", use_container_width=True):
+if st.button("🔄 Пересчитать проценты и обновить итоги", type="primary", use_container_width=True):
+    # Обнуляем выходные дни
     for wd in st.session_state.weekends:
-        if str(wd) in st.session_state.df.columns:
-            st.session_state.df[str(wd)] = 0
+        if str(wd) in edited_df.columns:
+            edited_df[str(wd)] = 0
             
+    # Математика
     total_hours_in_month = len(days) * 6 
     weekend_hours = len(st.session_state.weekends) * 6
     actual_study_hours = total_hours_in_month - weekend_hours
 
-    st.session_state.df['Всего часов'] = st.session_state.df[days].sum(axis=1)
-    st.session_state.df['Всего дней'] = (st.session_state.df[days] > 0).sum(axis=1)
-    st.session_state.df['%'] = ((actual_study_hours - st.session_state.df['Всего часов']) / actual_study_hours * 100).apply(lambda x: f"{max(0, x):.2f}%" if actual_study_hours > 0 else "100.00%")
+    edited_df['Всего часов'] = edited_df[days].sum(axis=1)
+    edited_df['Всего дней'] = (edited_df[days] > 0).sum(axis=1)
+    edited_df['%'] = ((actual_study_hours - edited_df['Всего часов']) / actual_study_hours * 100).apply(lambda x: f"{max(0, x):.2f}%" if actual_study_hours > 0 else "100.00%")
     
-    try:
-        st.session_state.df.to_csv(current_db_file, index=False, encoding='utf-8-sig')
-    except:
-        pass
-    st.success("Данные успешно пересчитаны и сохранены!")
+    # Сохраняем в память
+    st.session_state.df = edited_df
+    st.success("Расчеты обновлены!")
     st.rerun()
 
 # --- БЛОК СВОДКИ И БЫСТРОЙ ОТМЕТКИ ---
@@ -199,7 +170,6 @@ with col2:
         
     with st.form("quick_attendance_form"):
         attendance_checks = {}
-        
         for i, name in enumerate(st.session_state.df['ФИО']):
             attendance_checks[i] = st.checkbox(f"{name}", value=True, key=f"check_{i}")
             
@@ -211,11 +181,10 @@ with col2:
             else:
                 for i, was_present in attendance_checks.items():
                     current_val = st.session_state.df.at[i, selected_day]
-                    if was_present:
-                        pass 
-                    else:
+                    if not was_present:
                         st.session_state.df.at[i, selected_day] = current_val + hours_per_lesson
                 
+                # Сразу пересчитываем после галочек
                 total_hours_in_month = len(days) * 6 
                 weekend_hours = len(st.session_state.weekends) * 6
                 actual_study_hours = total_hours_in_month - weekend_hours
@@ -224,10 +193,6 @@ with col2:
                 st.session_state.df['Всего дней'] = (st.session_state.df[days] > 0).sum(axis=1)
                 st.session_state.df['%'] = ((actual_study_hours - st.session_state.df['Всего часов']) / actual_study_hours * 100).apply(lambda x: f"{max(0, x):.2f}%" if actual_study_hours > 0 else "100.00%")
                 
-                try:
-                    st.session_state.df.to_csv(current_db_file, index=False, encoding='utf-8-sig')
-                except:
-                    pass
                 st.success(f"Отметки за {selected_day} число (Пара №{lesson_num}) применены!")
                 st.rerun()
 
@@ -240,8 +205,9 @@ def convert_df(df):
 csv = convert_df(st.session_state.df)
 
 st.download_button(
-    label=f"📥 Скачать в Excel ({months_names[st.session_state.current_month - 1]})", 
+    label=f"📥 Скачать табель в Excel ({months_names[st.session_state.current_month - 1]})", 
     data=csv, 
     file_name=f'Табель_{st.session_state.current_month}_{st.session_state.current_year}.csv', 
-    mime='text/csv'
+    mime='text/csv',
+    use_container_width=True
 )
