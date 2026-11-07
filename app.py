@@ -1,6 +1,9 @@
 import streamlit as st
 import pandas as pd
 import calendar
+from io import BytesIO
+from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 
 # --- НАСТРОЙКА СТРАНИЦЫ ---
 st.set_page_config(page_title="Табель посещаемости", layout="wide")
@@ -47,7 +50,6 @@ with st.sidebar:
     uploaded_file = st.file_uploader("Загрузить сохраненный табель (CSV)", type="csv")
     if uploaded_file is not None:
         try:
-            # Читаем с учетом точки с запятой
             loaded_data = pd.read_csv(uploaded_file, sep=';')
             st.session_state.df = loaded_data
             st.success("Файл загружен!")
@@ -69,38 +71,20 @@ st.markdown("---")
 
 # --- СПИСОК СТУДЕНТОВ (ПО АЛФАВИТУ) ---
 students_list = [
-    "Агаев Али Камилович",
-    "Алирзаев Магомед Ифтихар оглы",
-    "Апшиков Даниял Анурович",
-    "Ахметшин Тимур Филюсович",
-    "Бабенцев Егор Маркович",
-    "Варшавец Елисей Александрович",
-    "Гайнуллин Вячеслав Юрьевич",
-    "Гасанбеков Фархад Игнатович",
-    "Гумеров Владимир Яковлевич",
-    "Дегтярева Татьяна Николаевна",
-    "Денисенко Егор Андреевич",
-    "Дмитриев Владислав Павлович",
-    "Ермаков Артем Ильич",
-    "Колмогоров Даниил Николаевич",
-    "Кузнецов Артем Михайлович",
-    "Лазарев Дмитрий Сергеевич",
-    "Макаренко Никита Николаевич",
-    "Марков Степан Александрович",
-    "Мельников Богдан Артёмович",
-    "Мирошниченко Алексей Андреевич",
-    "Папымере Илья Алексеевич",
-    "Протопопов Ярослав Алексеевич",
-    "Розыков Самандар Орифжонович",
-    "Савченко Владислав Вадимович",
-    "Сорокин Олег Константинович",
-    "Хаммадиев Тимур Рафаэльевич",
-    "Чепак Савелий Павлович",
+    "Агаев Али Камилович", "Алирзаев Магомед Ифтихар оглы", "Апшиков Даниял Анурович",
+    "Ахметшин Тимур Филюсович", "Бабенцев Егор Маркович", "Варшавец Елисей Александрович",
+    "Гайнуллин Вячеслав Юрьевич", "Гасанбеков Фархад Игнатович", "Гумеров Владимир Яковлевич",
+    "Дегтярева Татьяна Николаевна", "Денисенко Егор Андреевич", "Дмитриев Владислав Павлович",
+    "Ермаков Артем Ильич", "Колмогоров Даниил Николаевич", "Кузнецов Артем Михайлович",
+    "Лазарев Дмитрий Сергеевич", "Макаренко Никита Николаевич", "Марков Степан Александрович",
+    "Мельников Богдан Артёмович", "Мирошниченко Алексей Андреевич", "Папымере Илья Алексеевич",
+    "Протопопов Ярослав Алексеевич", "Розыков Самандар Орифжонович", "Савченко Владислав Вадимович",
+    "Сорокин Олег Константинович", "Хаммадиев Тимур Рафаэльевич", "Чепак Савелий Павлович",
     "Эсонов Шахриер Фаррухович"
 ]
 days = [str(i) for i in range(1, num_days_in_month + 1)]
 
-# --- ЛОГИКА СОЗДАНИЯ ТАБЛИЦЫ С НУМЕРАЦИЕЙ С 1 ---
+# --- ЛОГИКА СОЗДАНИЯ ТАБЛИЦЫ ---
 if 'df' not in st.session_state:
     columns = ['№', 'ФИО'] + days + ['Всего часов', 'Всего дней', '%', 'Примечание']
     df = pd.DataFrame(columns=columns)
@@ -122,7 +106,7 @@ for day in days:
     is_weekend = int(day) in st.session_state.weekends
     column_config[day] = st.column_config.NumberColumn(day, min_value=0, max_value=20, step=1, disabled=is_weekend)
 
-st.info("💡 Вводите часы. Пустые клетки = был. Для сохранения нажмите кнопку ниже.")
+st.info("💡 Вводите часы вручную. Пустые клетки = был. Нажмите кнопку ниже для пересчета и скачивания красивого файла.")
 
 edited_df = st.data_editor(
     st.session_state.df, 
@@ -181,7 +165,7 @@ with col1:
 
 with col2:
     st.subheader("⚡ Быстрая отметка")
-    st.write("Отметьте галочками тех, кто **ПРИШЕЛ**.")
+    st.write("Отметьте галочками тех, кто **ПРИШЕЛ**. Остальным прибавятся часы.")
     
     col_date, col_lesson, col_hours = st.columns(3)
     with col_date:
@@ -231,24 +215,77 @@ with col2:
                 st.success(f"Отметки за {selected_day} число применены!")
                 st.rerun()
 
-# --- СКАЧАТЬ ДЛЯ EXCEL (С РАЗДЕЛИТЕЛЕМ ТОЧКА С ЗАПЯТОЙ) ---
+# --- ФУНКЦИЯ СОЗДАНИЯ КРАСИВОГО EXCEL ---
+def create_styled_excel(df, month_name, year):
+    # Создаем новую книгу Excel в памяти
+    output = BytesIO()
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = f"Табель {month_name}"
+
+    # Стили
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+    center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    left_align = Alignment(horizontal="left", vertical="center")
+    thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+    
+    # Заголовок таблицы
+    worksheet.merge_cells('A1:E1')
+    worksheet['A1'] = f"ТАБЕЛЬ УЧЕТА ПОСЕЩАЕМОСТИ\nГруппа: РУПО 26/11 | {month_name} {year}"
+    worksheet['A1'].font = Font(bold=True, size=14)
+    worksheet['A1'].alignment = center_align
+    worksheet.row_dimensions[1].height = 40
+
+    # Записываем шапку (строка 2)
+    headers = list(df.columns)
+    for col_num, header in enumerate(headers, 1):
+        cell = worksheet.cell(row=3, column=col_num)
+        cell.value = header
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = center_align
+        cell.border = thin_border
+    
+    # Записываем данные (строки 4 и ниже)
+    for row_idx, row_data in enumerate(df.values, 4):
+        for col_idx, value in enumerate(row_data, 1):
+            cell = worksheet.cell(row=row_idx, column=col_idx)
+            # Если значение пустое (None или NaN), оставляем ячейку пустой, иначе пишем цифру/текст
+            if pd.isna(value):
+                cell.value = None
+            else:
+                cell.value = value
+                
+            cell.border = thin_border
+            cell.alignment = center_align
+            
+            # Выравниваем по левому краю ФИО и Примечания для красоты
+            if headers[col_idx-1] in ["ФИО", "Примечание"]:
+                cell.alignment = left_align
+
+    # Автоматическая ширина колонок
+    for column_cells in worksheet.columns:
+        length = max(len(str(cell.value)) for cell in column_cells)
+        worksheet.column_dimensions[column_cells[0].column_letter].width = length + 2
+
+    # Сохраняем в BytesIO
+    workbook.save(output)
+    output.seek(0)
+    return output
+
+# --- КНОПКА СКАЧИВАНИЯ EXCEL ---
 st.markdown("---")
-@st.cache_data
-def convert_df(df):
-    # ВАЖНО: sep=';' делает файл совместимым с русским Excel (колонки не слипаются)
-    # decimal=',' меняет точки на запятые в процентах (если нужно)
-    return df.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
+# Готовим данные для скачивания (заменяем None на пустоту, чтобы не было "None" в Excel)
+df_to_excel = st.session_state.df.copy()
 
-df_to_download = st.session_state.df.copy()
-for d in days:
-    df_to_download[d] = pd.to_numeric(df_to_download[d], errors='coerce').fillna(0)
-
-csv = convert_df(df_to_download)
+# Создаем файл
+excel_file = create_styled_excel(df_to_excel, months_names[st.session_state.current_month - 1], st.session_state.current_year)
 
 st.download_button(
-    label=f"📥 Скачать для Excel", 
-    data=csv, 
-    file_name=f'Табель_{st.session_state.current_month}_{st.session_state.current_year}.csv', 
-    mime='text/csv',
+    label=f"📥 Скачать красивый Excel", 
+    data=excel_file, 
+    file_name=f'Табель_{st.session_state.current_month}_{st.session_state.current_year}.xlsx', 
+    mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     use_container_width=True
 )
